@@ -4,8 +4,10 @@
 
 让 **MaiBot** 在群聊中暂时"闭嘴"。发送关键词 **麦麦闭嘴** 进入静音，发送 **麦麦张嘴** 解除静音。
 
-+![静音触发示例](https://github.com/user-attachments/assets/ca95d421-0013-4f96-a70f-4b9727be410f)
-+![静音中提示](https://github.com/user-attachments/assets/2c04d6ff-b8f6-433b-a311-0c26c16a0196)
+![静音触发示例](https://github.com/user-attachments/assets/0ba83f4c-03c4-4b3f-9e0d-53255bd97254)
+
+![静音中提示](https://github.com/user-attachments/assets/69b8ea4b-75df-4d25-a178-c656630085a5)
+
 
 ---
 
