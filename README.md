@@ -29,7 +29,7 @@
 ## 安装与使用 / Installation
 
 1. 下载或克隆本仓库。  
-2. 将 `silent_mode_plugin/` 文件夹放入 MaiBot 的 `plugins` 目录 (或将其路径加入 `PYTHONPATH`)。  
+2. 将 `silent_mode_plugin/` 文件夹放入 MaiBot 的 `plugins` 目录。  
 3. 重启/热加载插件后，在群聊发送 **麦麦闭嘴** → 进入静音；发送 **麦麦张嘴** → 解除。
 
 ## 配置
