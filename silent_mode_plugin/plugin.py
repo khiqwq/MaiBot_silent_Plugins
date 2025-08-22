@@ -11,13 +11,14 @@ from src.plugin_system import (
     register_plugin,
     BaseAction,
     BaseCommand,
+    BaseEventHandler,
     ComponentInfo,
     ActionActivationType,
     ChatMode,
     ConfigField,
+    EventType,
 )
 from src.common.logger import get_logger
-from src.chat.normal_chat.normal_chat import NormalChat  # 新增导入
 from src.config.config import global_config  # 引入机器人自身信息
 
 logger = get_logger("silent_mode_plugin")
@@ -138,7 +139,7 @@ class ShutupCommand(BaseCommand):
     async def execute(self):
         # 权限判断
         if not self._check_user_permission():
-            return False, "权限不足"
+            return False, "权限不足", False
 
         platform = self.message.chat_stream.platform
         group_id = str(self.message.chat_stream.group_info.group_id)
@@ -263,7 +264,8 @@ class ShutupCommand(BaseCommand):
         SilentStatus.set_mute(platform, group_id, duration, group_name)
         
         # 不发送任何提示消息，静默进入静音状态
-        return True, "已进入静音"
+        # 不发送提示消息，拦截后续处理
+        return True, None, True
 
     # ------------------ 权限校验 ------------------
     def _check_user_permission(self) -> bool:
@@ -289,10 +291,10 @@ class OpenMouthCommand(BaseCommand):
     async def execute(self):
         if not self.message.chat_stream.group_info:
             # 非群聊不处理
-            return False, "非群聊"
+            return False, "非群聊", False
 
         if not self._check_user_permission():
-            return False, "权限不足"
+            return False, "权限不足", False
 
         platform = self.message.chat_stream.platform
         group_id = str(self.message.chat_stream.group_info.group_id)
@@ -314,7 +316,7 @@ class OpenMouthCommand(BaseCommand):
         if group_name:
             SilentGroupLogFilter.remove_group(group_name)
         # 不发送任何提示消息，静默解除静音状态
-        return True, None
+        return True, None, True
 
     def _check_user_permission(self) -> bool:
         user_id = str(self.message.chat_stream.user_info.user_id)
@@ -465,16 +467,64 @@ class SilentFilterAction(BaseAction):
         return True, "静音过滤"
 
 
+# ======================== Event Handler ==========================
+
+
+class SilentEventInterceptor(BaseEventHandler):
+    """ON_MESSAGE 入口级静音拦截器：最早阶段阻断静音群的消息后续处理"""
+
+    handler_name = "silent_event_interceptor"
+    handler_description = "在消息入口拦截静音群的消息"
+    event_type = EventType.ON_MESSAGE
+    weight = 10_000  # 极高权重，确保最先执行
+    intercept_message = True
+
+    async def execute(self, message) -> tuple[bool, bool, str | None]:
+        try:
+            # 仅群聊生效
+            if not getattr(message, "is_group_message", False):
+                return True, True, None
+
+            platform = str(message.message_base_info.get("platform", ""))
+            group_id = str(message.message_base_info.get("group_id", ""))
+            if not platform or not group_id:
+                return True, True, None
+
+            if SilentStatus.is_muted(platform, group_id):
+                # 允许@打断与“张嘴”关键词解除
+                text = getattr(message, "plain_text", "") or ""
+                if is_open_mouth_keyword(text) or (_contains_at(text) and ALLOW_AT_BREAK):
+                    SilentStatus.clear_mute(platform, group_id)
+                    return True, True, None
+
+                # 阻断后续处理
+                SilentStatus.log_summary(platform, group_id)
+                return True, False, "静音拦截"
+
+            return True, True, None
+        except Exception as e:
+            logger.error(f"[SilentEventInterceptor] 执行异常: {e}")
+            return False, True, str(e)
+
 # =============== 最小补丁 ===============
 
 def _apply_silent_patch_to_normal_chat():
-    """给 NormalChat.normal_response 打补丁，拦截静音期间的所有回复。"""
+    """给 NormalChat.normal_response 打补丁，拦截静音期间的所有回复。
+
+    若未找到 NormalChat（不同版本无该模块），将优雅跳过，不影响插件其他功能。
+    """
+    try:
+        from src.chat.normal_chat.normal_chat import NormalChat  # type: ignore
+    except Exception:
+        logger.info("[SilentPatch] 未找到 NormalChat，跳过最小补丁应用")
+        return
+
     if getattr(NormalChat, "_silent_mode_patched", False):
         return  # 已经补过
 
     original_normal_response = NormalChat.normal_response
 
-    async def patched_normal_response(self: NormalChat, message, is_mentioned: bool, interested_rate: float):
+    async def patched_normal_response(self, message, is_mentioned: bool, interested_rate: float):
         # 仅群聊检查静音
         if hasattr(self.chat_stream, "group_info") and self.chat_stream.group_info:
             platform = self.chat_stream.platform
@@ -613,6 +663,8 @@ class SilentModePlugin(BasePlugin):
 
     plugin_name = "silent_mode_plugin"
     enable_plugin = True
+    dependencies: list[str] = []  # 无插件依赖
+    python_dependencies: list[str] = []  # 无额外Python依赖
     config_file_name = "config.toml"
 
     # 配置节描述
@@ -775,6 +827,8 @@ class SilentModePlugin(BasePlugin):
 
     def get_plugin_components(self) -> List[Tuple[ComponentInfo, Type]]:
         comps = [
+            # 事件拦截器优先注册，确保入口阻断
+            (SilentEventInterceptor.get_handler_info(), SilentEventInterceptor),
             (SilentFilterAction.get_action_info(), SilentFilterAction),
             (ShutupCommand.get_command_info(), ShutupCommand),
         ]
